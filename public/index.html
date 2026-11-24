@@ -1,0 +1,341 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>ESP32-CAM Global Live Stream & Recorder</title>
+  <style>
+    :root {
+      --bg-dark: #0f172a;
+      --card-bg: #1e293b;
+      --accent: #3b82f6;
+      --accent-hover: #2563eb;
+      --danger: #ef4444;
+      --success: #10b981;
+      --text: #f8fafc;
+      --text-muted: #94a3b8;
+      --border: #334155;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
+    body { background-color: var(--bg-dark); color: var(--text); padding: 12px; display: flex; flex-direction: column; align-items: center; min-height: 100vh; }
+    .container { width: 100%; max-width: 600px; display: flex; flex-direction: column; gap: 14px; }
+    
+    header { display: flex; justify-content: space-between; align-items: center; padding: 10px 14px; background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border); }
+    h1 { font-size: 1.1rem; font-weight: 600; display: flex; align-items: center; gap: 8px; }
+    .badge { font-size: 0.75rem; padding: 4px 10px; border-radius: 999px; font-weight: 600; }
+    .badge.online { background: rgba(16, 185, 129, 0.2); color: var(--success); border: 1px solid var(--success); }
+    .badge.offline { background: rgba(239, 68, 68, 0.2); color: var(--danger); border: 1px solid var(--danger); }
+
+    .video-card { position: relative; background: #000; border-radius: 14px; overflow: hidden; border: 1px solid var(--border); aspect-ratio: 400/296; display: flex; justify-content: center; align-items: center; }
+    #streamView { width: 100%; height: 100%; object-fit: contain; }
+    .hud { position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.6); padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; color: #fff; font-family: monospace; display: flex; gap: 10px; }
+    .rec-indicator { position: absolute; top: 10px; right: 10px; background: rgba(239,68,68,0.9); padding: 4px 10px; border-radius: 6px; font-size: 0.75rem; font-weight: bold; color: #fff; display: none; align-items: center; gap: 6px; }
+    .rec-indicator::before { content: ""; width: 8px; height: 8px; background: #fff; border-radius: 50%; animation: blink 1s infinite; }
+    @keyframes blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.3; } }
+
+    .action-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .btn { border: none; border-radius: 10px; padding: 12px 14px; font-size: 0.9rem; font-weight: 600; cursor: pointer; display: flex; align-items: center; justify-content: center; gap: 8px; transition: all 0.2s; color: #fff; }
+    .btn-photo { background: var(--accent); }
+    .btn-photo:hover { background: var(--accent-hover); }
+    .btn-record { background: #8b5cf6; }
+    .btn-record.recording { background: var(--danger); }
+    .btn-secondary { background: var(--card-bg); border: 1px solid var(--border); color: var(--text); }
+    .btn-secondary:hover { background: #273549; }
+
+    .panel { background: var(--card-bg); border-radius: 12px; border: 1px solid var(--border); padding: 14px; }
+    .panel-title { font-size: 0.95rem; font-weight: 600; margin-bottom: 12px; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px; }
+
+    .control-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+    .control-row label { font-size: 0.85rem; color: var(--text); }
+    .control-row select, .control-row input[type="range"] { accent-color: var(--accent); }
+    select { background: #0f172a; color: #fff; border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; }
+    .slider-wrap { display: flex; align-items: center; gap: 10px; width: 60%; }
+    .slider-wrap input { flex: 1; }
+    .slider-val { width: 30px; text-align: right; font-size: 0.8rem; font-family: monospace; }
+
+    .gallery-list { max-height: 200px; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; margin-top: 10px; }
+    .file-item { display: flex; justify-content: space-between; align-items: center; background: #0f172a; padding: 8px 12px; border-radius: 8px; font-size: 0.85rem; }
+    .file-actions { display: flex; gap: 6px; }
+    .btn-small { padding: 4px 8px; border-radius: 6px; font-size: 0.75rem; border: none; cursor: pointer; color: #fff; }
+    .btn-dl { background: var(--accent); }
+    .btn-del { background: var(--danger); }
+
+    .toast { position: fixed; bottom: 20px; left: 50%; transform: translateX(-50%); background: rgba(0,0,0,0.85); color: #fff; padding: 10px 18px; border-radius: 8px; font-size: 0.85rem; display: none; z-index: 1000; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>📷 ESP32-CAM OV3660</h1>
+      <span id="statusBadge" class="badge offline">Connecting...</span>
+    </header>
+
+    <div class="video-card">
+      <img id="streamView" src="" alt="Stream Loading...">
+      <div class="hud">
+        <span id="fpsMeter">0 FPS</span>
+        <span id="resBadge">CIF (400x296)</span>
+      </div>
+      <div id="recIndicator" class="rec-indicator">REC</div>
+    </div>
+
+    <div class="action-grid">
+      <button id="btnPhoto" class="btn btn-photo" onclick="capturePhoto()">
+        📸 Save Photo (SD + Local)
+      </button>
+      <button id="btnRecord" class="btn btn-record" onclick="toggleRecord()">
+        🎥 Start Video (SD)
+      </button>
+    </div>
+
+    <!-- Camera Controls -->
+    <div class="panel">
+      <div class="panel-title">⚡ OV3660 Live Controls</div>
+      
+      <div class="control-row">
+        <label>Resolution</label>
+        <select id="framesize" onchange="sendControl('framesize', this.value)">
+          <option value="5" selected>CIF (400x296) - Fastest</option>
+          <option value="4">QVGA (320x240)</option>
+          <option value="6">VGA (640x480)</option>
+          <option value="7">SVGA (800x600)</option>
+          <option value="8">XGA (1024x768)</option>
+        </select>
+      </div>
+
+      <div class="control-row">
+        <label>JPEG Quality</label>
+        <div class="slider-wrap">
+          <input type="range" id="quality" min="10" max="63" value="14" onchange="sendControl('quality', this.value)">
+          <span id="val_quality" class="slider-val">14</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label>Flash LED</label>
+        <div class="slider-wrap">
+          <input type="range" id="led_intensity" min="0" max="255" value="0" onchange="sendControl('led_intensity', this.value)">
+          <span id="val_led_intensity" class="slider-val">0</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label>Brightness</label>
+        <div class="slider-wrap">
+          <input type="range" id="brightness" min="-2" max="2" value="0" onchange="sendControl('brightness', this.value)">
+          <span id="val_brightness" class="slider-val">0</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label>Contrast</label>
+        <div class="slider-wrap">
+          <input type="range" id="contrast" min="-2" max="2" value="0" onchange="sendControl('contrast', this.value)">
+          <span id="val_contrast" class="slider-val">0</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label>Saturation</label>
+        <div class="slider-wrap">
+          <input type="range" id="saturation" min="-2" max="2" value="0" onchange="sendControl('saturation', this.value)">
+          <span id="val_saturation" class="slider-val">0</span>
+        </div>
+      </div>
+
+      <div class="control-row">
+        <label>Special Effect</label>
+        <select id="special_effect" onchange="sendControl('special_effect', this.value)">
+          <option value="0" selected>Normal</option>
+          <option value="1">Negative</option>
+          <option value="2">Grayscale</option>
+          <option value="3">Red Tint</option>
+          <option value="4">Green Tint</option>
+          <option value="5">Blue Tint</option>
+          <option value="6">Sepia</option>
+        </select>
+      </div>
+
+      <div class="control-row">
+        <label>V-Flip (OV3660)</label>
+        <input type="checkbox" id="vflip" checked onchange="sendControl('vflip', this.checked ? 1 : 0)">
+      </div>
+    </div>
+
+    <!-- SD Card Gallery -->
+    <div class="panel">
+      <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+        <div class="panel-title" style="margin:0;">📁 SD Card Media</div>
+        <button class="btn-small btn-secondary" onclick="requestFileList()">🔄 Refresh</button>
+      </div>
+      <div id="fileList" class="gallery-list">
+        <div style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:10px;">Click Refresh to load SD card recordings</div>
+      </div>
+    </div>
+  </div>
+
+  <div id="toast" class="toast"></div>
+
+  <script>
+    const streamView = document.getElementById('streamView');
+    const statusBadge = document.getElementById('statusBadge');
+    const fpsMeter = document.getElementById('fpsMeter');
+    const recIndicator = document.getElementById('recIndicator');
+    const btnRecord = document.getElementById('btnRecord');
+    const toast = document.getElementById('toast');
+
+    let ws = null;
+    let isRecording = false;
+    let frameCount = 0;
+    let lastFpsUpdate = Date.now();
+    let currentObjectUrl = null;
+
+    function showToast(msg) {
+      toast.innerText = msg;
+      toast.style.display = 'block';
+      setTimeout(() => { toast.style.display = 'none'; }, 3000);
+    }
+
+    function connectWs() {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const wsUrl = `${protocol}//${window.location.host}`;
+      ws = new WebSocket(wsUrl);
+      ws.binaryType = 'arraybuffer';
+
+      ws.onopen = () => {
+        statusBadge.className = 'badge online';
+        statusBadge.innerText = 'Connected';
+      };
+
+      ws.onmessage = (event) => {
+        if (event.data instanceof ArrayBuffer) {
+          // Video Frame Received
+          frameCount++;
+          const now = Date.now();
+          if (now - lastFpsUpdate >= 1000) {
+            fpsMeter.innerText = `${frameCount} FPS`;
+            frameCount = 0;
+            lastFpsUpdate = now;
+          }
+
+          const blob = new Blob([event.data], { type: 'image/jpeg' });
+          if (currentObjectUrl) URL.revokeObjectURL(currentObjectUrl);
+          currentObjectUrl = URL.createObjectURL(blob);
+          streamView.src = currentObjectUrl;
+        } else {
+          // JSON text message
+          try {
+            const data = JSON.parse(event.data);
+            handleServerMessage(data);
+          } catch(e) {}
+        }
+      };
+
+      ws.onclose = () => {
+        statusBadge.className = 'badge offline';
+        statusBadge.innerText = 'Disconnected';
+        setTimeout(connectWs, 2000);
+      };
+
+      ws.onerror = () => ws.close();
+    }
+
+    function handleServerMessage(data) {
+      if (data.type === 'status') {
+        if (data.cameraOnline) {
+          statusBadge.className = 'badge online';
+          statusBadge.innerText = 'Camera Online';
+        } else {
+          statusBadge.className = 'badge offline';
+          statusBadge.innerText = 'Camera Offline';
+        }
+      } else if (data.type === 'photo_saved') {
+        showToast(`📸 Photo saved to SD: ${data.filename}`);
+        if (data.base64) {
+          downloadBase64(data.base64, data.filename);
+        }
+        requestFileList();
+      } else if (data.type === 'record_status') {
+        isRecording = data.recording;
+        if (isRecording) {
+          recIndicator.style.display = 'flex';
+          btnRecord.className = 'btn btn-record recording';
+          btnRecord.innerText = '⏹️ Stop Video (SD)';
+          showToast('🎥 Recording started on SD card');
+        } else {
+          recIndicator.style.display = 'none';
+          btnRecord.className = 'btn btn-record';
+          btnRecord.innerText = '🎥 Start Video (SD)';
+          showToast(`✅ Video saved: ${data.filename || ''}`);
+          requestFileList();
+        }
+      } else if (data.type === 'file_list') {
+        renderFileList(data.files || []);
+      }
+    }
+
+    function downloadBase64(base64Data, filename) {
+      const a = document.createElement('a');
+      a.href = 'data:image/jpeg;base64,' + base64Data;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+    }
+
+    function sendControl(varName, value) {
+      const label = document.getElementById(`val_${varName}`);
+      if (label) label.innerText = value;
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ cmd: 'control', var: varName, val: parseInt(value) }));
+      }
+    }
+
+    function capturePhoto() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        showToast('Capturing photo...');
+        ws.send(JSON.stringify({ cmd: 'capture' }));
+      }
+    }
+
+    function toggleRecord() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ cmd: 'record', action: isRecording ? 'stop' : 'start' }));
+      }
+    }
+
+    function requestFileList() {
+      if (ws && ws.readyState === WebSocket.OPEN) {
+        ws.send(JSON.stringify({ cmd: 'list_files' }));
+      }
+    }
+
+    function renderFileList(files) {
+      const container = document.getElementById('fileList');
+      if (files.length === 0) {
+        container.innerHTML = '<div style="color:var(--text-muted); font-size:0.8rem; text-align:center; padding:10px;">No files on SD card yet.</div>';
+        return;
+      }
+      container.innerHTML = files.map(f => `
+        <div class="file-item">
+          <div><strong>${f.name}</strong> <span style="color:var(--text-muted); font-size:0.75rem;">(${Math.round(f.size/1024)} KB)</span></div>
+          <div class="file-actions">
+            <button class="btn-small btn-del" onclick="deleteFile('${f.name}')">🗑️</button>
+          </div>
+        </div>
+      `).join('');
+    }
+
+    function deleteFile(filename) {
+      if (confirm(`Delete ${filename} from SD card?`)) {
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ cmd: 'delete_file', filename: filename }));
+          setTimeout(requestFileList, 500);
+        }
+      }
+    }
+
+    connectWs();
+  </script>
+</body>
+</html>
